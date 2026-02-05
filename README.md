@@ -27,13 +27,23 @@ I (Tront) ported this logic from Godot's shading language to raw GLSL for Three.
 
 ## How It Works
 
-The "magic" is **Cylindrical/Axial Billboarding**:
+### The Trick
 
-1. The vertex shader computes a `cross` product between the camera direction and the beam's local Y-axis
-2. This forces the quad to always face the camera, but only rotates around the beam axis
-3. The fragment shader procedurally draws the cone shape, soft edges, vertical fade, and scrolling noise layers
+It's a flat quad. That's it. Valve did this in Half-Life 2 (2004, map `d1_canals_08`) — not real volumetric fog, just a billboard that rotates to face the camera. Your brain does the rest. Passivestar reverse-engineered the technique and rebuilt it in Godot; this port brings it to raw GLSL on Three.js.
 
-No raymarching. No volume textures. Just a flat quad that looks 3D.
+### Vertex Shader: Cylindrical Billboarding
+
+A `cross` product between the camera-to-beam direction and the beam's local Y-axis gives us a new "right" vector. We rebuild the quad's vertex positions using this right vector (horizontal) and the beam axis (vertical). The result: the quad always faces you, but it's locked to its axis — it won't flip or tumble. The shader also computes a `dot` product between the view direction and beam axis to produce a fade value. When you look straight down the beam and would see it edge-on (paper-thin), it fades out gracefully instead of breaking the illusion.
+
+### Fragment Shader: Shape + Atmosphere
+
+The cone shape comes from `pow(uv.y, 1.0 - curve)` — this interpolates the width from a narrow tip to a wide base along the beam's length. A horizontal `smoothstep` mask gives the edges a soft falloff instead of a hard cutout. A vertical power-fade dims the beam toward the end.
+
+For atmosphere, three noise texture samples scroll in different directions: two control alpha (dust/smoke density), one drives UV distortion so the noise isn't static. World-position offsets (`vWorldPos.xz`, `.y`) ensure each beam samples a different region of the noise texture, so beams next to each other don't look identical.
+
+### Performance
+
+One shared `ShaderMaterial` is created, then `.clone()`'d for each beam — this shares the compiled shader program on the GPU while giving each beam its own uniform values (color, length, time offset). Additive blending with no depth writes means no sorting overhead. The noise texture is generated once on a `<canvas>` at startup — zero external assets, zero network requests. Compare this to raymarched volumetrics (dozens of texture samples per pixel per frame) and the cost difference is night and day.
 
 ## Usage
 

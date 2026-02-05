@@ -67,7 +67,24 @@
     <div id="overlay">
         <h1>Volumetric Light Beam</h1>
         <p>
-            A high-performance "fake" volumetric light shader using cylindrical billboarding and procedural noise. 
+            This isn't real volumetric fog &mdash; it's a flat 2D quad that <em>looks</em> volumetric.
+            Valve shipped this exact trick in Half-Life 2 back in 2004 (map <code>d1_canals_08</code>).
+            Twenty years later it still holds up because your brain fills in the rest.
+        </p>
+        <p>
+            The vertex shader does <strong>cylindrical billboarding</strong>: a cross product between the camera direction
+            and the beam axis gives a "right" vector, so the quad always faces you but stays locked to its axis.
+            A dot-product fade hides the paper-thin edge when you look straight down the beam.
+        </p>
+        <p>
+            The fragment shader draws a cone shape via <code>pow(uv.y, 1-curve)</code> width interpolation,
+            soft edges with smoothstep, and three scrolling noise samples (two for alpha, one for distortion)
+            that fake drifting dust. World-position offsets give each beam unique noise.
+        </p>
+        <p>
+            Cost: near zero. One shared shader program, <code>.clone()</code> for per-beam uniforms,
+            additive blending, no depth writes, procedural canvas noise &mdash; no external textures needed.
+            Raymarching this would murder your framerate; this doesn't.
         </p>
         <p>
             <strong>Original Concept (Godot):</strong><br>
@@ -276,6 +293,8 @@
         // --- 4. BEAM FACTORY ---
         
         const beams = [];
+        const lightCount = { lights: 0 };
+        let lightCounter = null;
         
         // Base Geometry (Origin at Top)
         const geometry = new THREE.PlaneGeometry(1, 1, 1, 1);
@@ -402,9 +421,9 @@
             }
         };
 
-        const lightCount = { lights: beams.length };
+        lightCount.lights = beams.length;
         const fActions = gui.addFolder('Actions');
-        const lightCounter = fActions.add(lightCount, 'lights').name('Lights').disable();
+        lightCounter = fActions.add(lightCount, 'lights').name('Lights').disable();
         fActions.add(actions, 'addRandom').name('✨ Spawn Random Light');
         fActions.add(actions, 'clear').name('🗑️ Clear All');
 
