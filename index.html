@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volumetric Light Beam | Godot Port</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        #overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 350px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            color: #eee;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            user-select: none;
+        }
+        
+        #overlay h1 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+
+        #overlay p {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #ccc;
+            margin-bottom: 15px;
+        }
+
+        #overlay a {
+            color: #4da6ff;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        
+        #overlay a:hover {
+            color: #fff;
+            text-decoration: underline;
+        }
+
+        .credits-sub {
+            font-size: 11px !important;
+            color: #777 !important;
+            margin-top: 15px;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h1>Volumetric Light Beam</h1>
+        <p>
+            A high-performance "fake" volumetric light shader using cylindrical billboarding and procedural noise. 
+        </p>
+        <p>
+            <strong>Original Concept (Godot):</strong><br>
+            <a href="https://passivestar.xyz/posts/light-beam-shader-in-godot/" target="_blank">Passivestar Blog Post</a><br>
+            <a href="https://bsky.app/profile/passivestar.bsky.social/post/3lyge6cxs5k24" target="_blank">Bluesky Thread</a>
+        </p>
+        <p class="credits-sub">
+            PORTED BY <strong>TRENT STERLING / TRONT</strong> AND <strong>GEMINI 3 PRO</strong>
+        </p>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import GUI from 'lil-gui';
+
+        // --- 1. UTILS ---
+        
+        function createNoiseTexture(size = 256) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, size, size);
+            
+            for (let i = 0; i < 3; i++) {
+                const scale = Math.pow(2, i);
+                const opacity = 1 / (scale * 1.5);
+                
+                const imageData = ctx.createImageData(size, size);
+                const data = imageData.data;
+                for (let j = 0; j < data.length; j += 4) {
+                    const val = Math.random() * 255;
+                    data[j] = val;     
+                    data[j+1] = val;   
+                    data[j+2] = val;   
+                    data[j+3] = 255 * opacity; 
+                }
+                
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = size;
+                tempCanvas.height = size;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(imageData, 0, 0);
+                
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.drawImage(tempCanvas, 0, 0, size/scale, size/scale, 0, 0, size, size);
+            }
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.minFilter = THREE.LinearMipMapLinearFilter;
+            tex.generateMipmaps = true;
+            return tex;
+        }
+
+        const noiseMap = createNoiseTexture(512);
+
+        // --- 2. SCENE ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.FogExp2(0x050505, 0.02); 
+        
+        const gridHelper = new THREE.GridHelper(50, 50, 0x222222, 0x111111);
+        scene.add(gridHelper);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(0, 4, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 4, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // --- 3. SHADER CODE ---
+        const vertexShader = `
+            uniform vec3 uCameraPos;
+            uniform float uLength;
+            uniform float uZFadeStart;
+            uniform float uZFadeEnd;
+            
+            varying vec2 vUv;
+            varying float vZAxisFade;
+            varying vec3 vWorldPos; 
+
+            void main() {
+                vUv = uv;
+                
+                vec4 modelPos = modelMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+                vWorldPos = modelPos.xyz;
+
+                // 1. Get Beam Axis (Local Y)
+                vec3 localAxis = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
+                
+                // 2. View Vector
+                vec3 toCamera = normalize(uCameraPos - modelPos.xyz);
+                
+                // 3. Billboarding (Rotate around axis)
+                vec3 newRight = normalize(cross(toCamera, localAxis));
+                
+                // 4. Vertex Displacement
+                float scaleX = length(modelMatrix[0].xyz); // Use object scale for width
+                float scaleY = uLength; 
+
+                vec3 finalPos = modelPos.xyz 
+                              + (newRight * position.x * scaleX) 
+                              + (localAxis * position.y * scaleY);
+
+                // 5. Camera Axis Fade (Hide when looking down the tube)
+                float dotView = abs(dot(toCamera, localAxis));
+                vZAxisFade = 1.0 - smoothstep(1.0 - uZFadeEnd, 1.0 - uZFadeStart, dotView);
+
+                gl_Position = projectionMatrix * viewMatrix * vec4(finalPos, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            uniform vec3 uColor;
+            
+            uniform float uConeStartWidth;
+            uniform float uConeCurve;
+            uniform float uBeamSharpness;
+            uniform float uBeamFade;
+            
+            uniform sampler2D uNoiseTexture;
+            uniform float uNoiseScale;
+            uniform float uNoiseIntensity;
+            uniform vec2 uNoiseScrollSpeed;
+            uniform float uNoiseDistortionIntensity;
+            uniform vec2 uNoiseDistortionScrollSpeed;
+            uniform float uTime;
+            
+            varying vec2 vUv;
+            varying float vZAxisFade;
+            varying vec3 vWorldPos;
+
+            void main() {
+                // 1. Shape Math
+                float cone_progress = pow(vUv.y, 1.0 - uConeCurve);
+                float width = mix(uConeStartWidth, 1.0, cone_progress);
+                float half_width = width * 0.5;
+                
+                // 2. Horizontal Mask (The Beam edges)
+                float dist_x = abs(vUv.x - 0.5);
+                float beam_edge_start = half_width - (half_width * (1.0 - uBeamSharpness));
+                float horiz_mask = 1.0 - smoothstep(beam_edge_start, half_width, dist_x);
+                
+                // 3. Vertical Mask (Fade bottom)
+                float vert_mask = pow(max(1.0 - vUv.y, 0.001), uBeamFade);
+                vert_mask *= smoothstep(0.0, uConeStartWidth * 0.5, vUv.y); // Smooth top
+                
+                // 4. Procedural Noise
+                // Scroll distortion
+                vec2 distortionOffset = uNoiseDistortionScrollSpeed * uTime;
+                
+                // Use world pos to offset noise so every beam looks different
+                vec2 worldOffset = vWorldPos.xz * 0.5 + vWorldPos.y * 0.1;
+                
+                vec2 noiseUV = (vUv * uNoiseScale) + worldOffset;
+                vec2 distSample = texture2D(uNoiseTexture, noiseUV + distortionOffset).rg;
+                vec2 distortedUV = vUv + (distSample - 0.5) * 2.0 * uNoiseDistortionIntensity;
+                
+                // Scroll main noise layers
+                vec2 scroll1 = uNoiseScrollSpeed * uTime;
+                vec2 scroll2 = vec2(-uNoiseScrollSpeed.x * 0.7, uNoiseScrollSpeed.y * 1.3) * uTime;
+                
+                float n1 = texture2D(uNoiseTexture, distortedUV * uNoiseScale + scroll1 + worldOffset).r;
+                float n2 = texture2D(uNoiseTexture, distortedUV * uNoiseScale + scroll2 + worldOffset).r;
+                
+                float combinedNoise = mix(1.0, n1 * n2, 1.0 - vert_mask);
+                horiz_mask *= mix(1.0, combinedNoise, uNoiseIntensity);
+                
+                // 5. Final Alpha
+                float alpha = horiz_mask * vert_mask * vZAxisFade;
+                
+                gl_FragColor = vec4(uColor, alpha);
+            }
+        `;
+
+        // --- 4. BEAM FACTORY ---
+        
+        const beams = [];
+        
+        // Base Geometry (Origin at Top)
+        const geometry = new THREE.PlaneGeometry(1, 1, 1, 1);
+        const uvs = geometry.attributes.uv;
+        // Flip UV Y so 0.0 is top (Source) and 1.0 is bottom (End)
+        for(let i=0; i<uvs.count; i++) uvs.setY(i, 1.0 - uvs.getY(i)); 
+        geometry.translate(0, -0.5, 0);
+
+        // Source Box Geo
+        const boxGeo = new THREE.BoxGeometry(0.2, 0.4, 0.2);
+        const boxMat = new THREE.MeshBasicMaterial({color: 0xffffff});
+
+        // Global Parameters (The "Atmosphere" settings)
+        const globalParams = {
+            coneStart: 0.005,
+            coneCurve: 0.5,
+            sharpness: 0.4,
+            beamFade: 1.8,
+            noiseInt: 0.8,
+            noiseScale: 2.0,
+            noiseSpeed: 1.0
+        };
+
+        // MASTER MATERIAL (We clone this for performance)
+        const masterMaterial = new THREE.ShaderMaterial({
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            uniforms: {
+                uColor: { value: new THREE.Color(0xbfdcae) },
+                
+                // Global Uniforms (Placeholder values, updated via loop)
+                uConeStartWidth: { value: globalParams.coneStart },
+                uConeCurve: { value: globalParams.coneCurve },
+                uBeamSharpness: { value: globalParams.sharpness },
+                uBeamFade: { value: globalParams.beamFade },
+                
+                uLength: { value: 8.0 },
+                uZFadeStart: { value: 0.0 },
+                uZFadeEnd: { value: 0.08 },
+                uCameraPos: { value: new THREE.Vector3() },
+                
+                uNoiseTexture: { value: noiseMap },
+                uNoiseScale: { value: globalParams.noiseScale },
+                uNoiseIntensity: { value: globalParams.noiseInt },
+                uNoiseScrollSpeed: { value: new THREE.Vector2(0.05, 0.1) },
+                uNoiseDistortionIntensity: { value: 0.05 },
+                uNoiseDistortionScrollSpeed: { value: new THREE.Vector2(0.01, 0.03) },
+                uTime: { value: 0.0 } 
+            },
+            vertexShader: vertexShader,
+            fragmentShader: fragmentShader
+        });
+
+        function createBeam(opts = {}) {
+            const config = {
+                color: 0xbfdcae,
+                width: 4.0,
+                length: 8.0,
+                pos: new THREE.Vector3(0, 0, 0),
+                rot: new THREE.Euler(0, 0, 0),
+                ...opts
+            };
+
+            // OPTIMIZATION: Clone the master material.
+            // This shares the Shader Program but gives unique Uniforms.
+            const material = masterMaterial.clone();
+            
+            // Set unique physical properties
+            material.uniforms.uColor.value.setHex(config.color);
+            material.uniforms.uLength.value = config.length;
+            material.uniforms.uTime.value = Math.random() * 100; // Randomize start time
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.copy(config.pos);
+            mesh.rotation.copy(config.rot);
+            mesh.scale.x = config.width; 
+
+            const source = new THREE.Mesh(boxGeo, boxMat);
+            source.position.copy(config.pos);
+            source.rotation.copy(config.rot);
+
+            scene.add(mesh);
+            scene.add(source);
+            
+            beams.push({ mesh, source, material });
+        }
+
+        // --- 5. INITIAL SCENE ---
+        createBeam({ pos: new THREE.Vector3(0, 6, 0), width: 5 });
+        createBeam({ pos: new THREE.Vector3(-4, 5, 2), rot: new THREE.Euler(0.2, 0, -0.2), color: 0xaecdbf, width: 3 });
+        createBeam({ pos: new THREE.Vector3(4, 5, -2), rot: new THREE.Euler(-0.2, 0, 0.2), color: 0xdcaebf, width: 3 });
+
+        // --- 6. GUI CONFIG ---
+        const gui = new GUI({ title: 'Shader Config' });
+        
+        const actions = {
+            addRandom: () => {
+                const x = (Math.random() - 0.5) * 40;
+                const z = (Math.random() - 0.5) * 40;
+                const y = 4 + Math.random() * 5;
+                
+                const hue = Math.random();
+                const color = new THREE.Color().setHSL(hue, 0.5, 0.7);
+                
+                createBeam({
+                    color: color.getHex(),
+                    pos: new THREE.Vector3(x, y, z),
+                    rot: new THREE.Euler((Math.random()-0.5), Math.random()*Math.PI*2, (Math.random()-0.5)),
+                    width: 2 + Math.random() * 6,
+                    length: 6 + Math.random() * 6
+                });
+            },
+            clear: () => {
+                beams.forEach(b => {
+                    scene.remove(b.mesh);
+                    scene.remove(b.source);
+                    b.material.dispose();
+                });
+                beams.length = 0;
+            }
+        };
+
+        const fActions = gui.addFolder('Actions');
+        fActions.add(actions, 'addRandom').name('✨ Spawn Random Light');
+        fActions.add(actions, 'clear').name('🗑️ Clear All');
+
+        const updateAllUniforms = (key, value) => {
+            globalParams[key] = value;
+            beams.forEach(b => {
+                if(key === 'coneStart') b.material.uniforms.uConeStartWidth.value = value;
+                if(key === 'coneCurve') b.material.uniforms.uConeCurve.value = value;
+                if(key === 'sharpness') b.material.uniforms.uBeamSharpness.value = value;
+                if(key === 'beamFade') b.material.uniforms.uBeamFade.value = value;
+                if(key === 'noiseInt') b.material.uniforms.uNoiseIntensity.value = value;
+                if(key === 'noiseScale') b.material.uniforms.uNoiseScale.value = value;
+            });
+        };
+
+        const fShape = gui.addFolder('Global Beam Shape');
+        fShape.add(globalParams, 'coneCurve', 0.0, 1.0).name('Cone Curve').onChange(v => updateAllUniforms('coneCurve', v));
+        fShape.add(globalParams, 'coneStart', 0.0, 0.5).name('Tip Width').onChange(v => updateAllUniforms('coneStart', v));
+        fShape.add(globalParams, 'sharpness', 0.0, 1.0).name('Edge Sharpness').onChange(v => updateAllUniforms('sharpness', v));
+        fShape.add(globalParams, 'beamFade', 0.1, 5.0).name('Vertical Fade').onChange(v => updateAllUniforms('beamFade', v));
+
+        const fNoise = gui.addFolder('Global Atmosphere');
+        fNoise.add(globalParams, 'noiseInt', 0.0, 1.0).name('Dust Intensity').onChange(v => updateAllUniforms('noiseInt', v));
+        fNoise.add(globalParams, 'noiseScale', 0.1, 10.0).name('Noise Scale').onChange(v => updateAllUniforms('noiseScale', v));
+        fNoise.add(globalParams, 'noiseSpeed', 0.0, 5.0).name('Sim Speed');
+
+        fShape.open();
+        fNoise.open();
+        fActions.open();
+
+        // --- 7. LOOP ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            const timeStep = dt * globalParams.noiseSpeed;
+
+            // Only update active beams
+            if(beams.length > 0) {
+                // Optimization: We could set these globally if we used shared uniforms,
+                // but since we allow unique timing, we loop.
+                beams.forEach(b => {
+                    b.material.uniforms.uTime.value += timeStep;
+                    b.material.uniforms.uCameraPos.value.copy(camera.position);
+                });
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
