@@ -4,7 +4,7 @@ A high-performance WebGL port of the "Fake Volumetric Light" shader, originally 
 
 This effect uses **Cylindrical Billboarding** in the vertex shader to force a flat quad to always face the camera while rotating exclusively around the light beam's axis. This creates a convincing 3D volumetric cone effect without the heavy performance cost of raymarching.
 
-[**Live Demo**](https://trentsterling.github.io/threejs-volumetric-beam/)
+[**Live Demo**](https://tront.xyz/threejs-volumetric-beam/)
 
 ## The Backstory
 
