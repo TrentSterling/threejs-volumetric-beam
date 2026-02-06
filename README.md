@@ -1,5 +1,7 @@
 # Three.js Volumetric Light Beam (Godot Port)
 
+![Colorful volumetric light beams rendered in Three.js](https://blog.tront.xyz/assets/img/blog/volumetric_beam.png)
+
 A high-performance WebGL port of the "Fake Volumetric Light" shader, originally created for Godot and inspired by the lighting techniques used in **Half-Life 2**.
 
 This effect uses **Cylindrical Billboarding** in the vertex shader to force a flat quad to always face the camera while rotating exclusively around the light beam's axis. This creates a convincing 3D volumetric cone effect without the heavy performance cost of raymarching.
