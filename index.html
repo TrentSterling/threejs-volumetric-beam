@@ -69,10 +69,50 @@
             border-top: 1px solid #333;
             padding-top: 10px;
         }
+
+        #info-toggle {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #333;
+            color: #fff;
+            font-size: 20px;
+            font-weight: 700;
+            cursor: pointer;
+            z-index: 10;
+            backdrop-filter: blur(5px);
+            line-height: 40px;
+            text-align: center;
+            user-select: none;
+        }
+
+        @media (max-width: 768px) {
+            #overlay {
+                display: none;
+                width: calc(100vw - 40px);
+                max-height: 60vh;
+                overflow-y: auto;
+                bottom: 70px;
+                left: 10px;
+                padding: 15px;
+                font-size: 12px;
+                z-index: 10;
+            }
+            #overlay.visible { display: block; }
+            #overlay h1 { font-size: 15px; }
+            #overlay p { font-size: 11px; margin-bottom: 10px; }
+            #info-toggle { display: block; }
+        }
     </style>
 </head>
 <body>
 
+    <div id="info-toggle" onclick="document.getElementById('overlay').classList.toggle('visible')">i</div>
     <div id="overlay">
         <h1>Volumetric Light Beam</h1>
         <p>
@@ -459,9 +499,15 @@
         fNoise.add(globalParams, 'noiseScale', 0.1, 10.0).name('Noise Scale').onChange(v => updateAllUniforms('noiseScale', v));
         fNoise.add(globalParams, 'noiseSpeed', 0.0, 5.0).name('Sim Speed');
 
-        fShape.open();
-        fNoise.open();
-        fActions.open();
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+            gui.domElement.style.width = '200px';
+            gui.close();
+        } else {
+            fShape.open();
+            fNoise.open();
+            fActions.open();
+        }
 
         // --- 7. LOOP ---
         const clock = new THREE.Clock();
