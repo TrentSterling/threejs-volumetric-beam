@@ -1,6 +1,6 @@
 # Three.js Volumetric Light Beam (Godot Port)
 
-![Colorful volumetric light beams rendered in Three.js](https://blog.tront.xyz/assets/img/blog/volumetric_beam.png)
+![Colorful volumetric light beams rendered in Three.js](https://tront.xyz/blog/assets/img/blog/volumetric_beam.png)
 
 A high-performance WebGL port of the "Fake Volumetric Light" shader, originally created for Godot and inspired by the lighting techniques used in **Half-Life 2**.
 
